@@ -41,10 +41,10 @@ class _ClientScreenState extends State<_ClientScreen> {
   late final TextEditingController _messageController;
   final List<_PendingDatagram> _pendingMessages = <_PendingDatagram>[];
   RawDatagramSocket? _socket;
+  StreamSubscription<RawSocketEvent>? _socketSubscription;
   Timer? _timer;
   bool _isSending = false;
   bool _isFlushingQueue = false;
-  int _sendSession = 0;
   int _nextId = 0;
 
   @override
@@ -100,12 +100,28 @@ class _ClientScreenState extends State<_ClientScreen> {
               : InternetAddress.anyIPv4;
       final socket = await RawDatagramSocket.bind(bindAddress, 0);
       _socket = socket;
-      final session = ++_sendSession;
+      _socketSubscription = socket.listen(
+        (_) {},
+        onError: (Object error, StackTrace stackTrace) {
+          _appendLog('UDP socket stream error: $error');
+        },
+        onDone: () {
+          _appendLog('UDP socket closed.');
+          _socket = null;
+          _socketSubscription = null;
+          _timer?.cancel();
+          _timer = null;
+          if (mounted) {
+            setState(() {});
+          }
+        },
+        cancelOnError: false,
+      );
       _appendLog(
         'Sending UDP datagrams from ${socket.address.address}:${socket.port} to ${host.address}:$port',
       );
 
-      _timer = Timer.periodic(widget.config.interval, (_) {
+      _timer = Timer.periodic(Duration(milliseconds: 50), (_) {
         for (var index = 0; index < 2; index++) {
           _pendingMessages.add(
             _PendingDatagram(
@@ -119,10 +135,8 @@ class _ClientScreenState extends State<_ClientScreen> {
             ),
           );
         }
-        unawaited(_flushQueue(session));
+        unawaited(_flushQueue());
       });
-
-      unawaited(_flushQueue(session));
     } catch (error) {
       _appendLog('Failed to start sender: $error');
     } finally {
@@ -134,7 +148,7 @@ class _ClientScreenState extends State<_ClientScreen> {
     }
   }
 
-  Future<void> _flushQueue(int session) async {
+  Future<void> _flushQueue() async {
     if (_isFlushingQueue) {
       return;
     }
@@ -142,9 +156,9 @@ class _ClientScreenState extends State<_ClientScreen> {
     _isFlushingQueue = true;
 
     try {
-      while (_sendSession == session && _socket != null && _pendingMessages.isNotEmpty) {
+      while (_socket != null && _pendingMessages.isNotEmpty) {
         final socket = _socket;
-        if (socket == null || _sendSession != session) {
+        if (socket == null) {
           break;
         }
 
@@ -160,38 +174,36 @@ class _ClientScreenState extends State<_ClientScreen> {
           if (bytesSent == 0) {
             pending.attempts++;
             _appendLog(
-              'Failed to send (bytes = 0) id=${pending.message.id} to ${pending.host.address}:${pending.port}; retry attempt ${pending.attempts}',
+              'Failed to send (bytes = 0) id=${pending.message.id} to ${pending.host.address}:${pending.port}; retry attempt ${pending.attempts}.',
             );
-            await Future<void>.delayed(widget.config.interval);
             continue;
           }
 
-          if (pending.attempts > 0) {
-            _appendLog(
-              'Retry succeeded for id=${pending.message.id} after ${pending.attempts} failure(s)',
-            );
-          }
-          _appendLog(
-            'Sent id=${pending.message.id} time=${pending.message.time.toIso8601String()} message="${pending.message.message}"',
-          );
           _pendingMessages.removeAt(0);
+        } on SocketException catch (error) {
+          pending.attempts++;
+          _appendLog(
+            'SocketException while sending id=${pending.message.id} to ${pending.host.address}:${pending.port}: $error; retry attempt ${pending.attempts}',
+          );
         } catch (error) {
           pending.attempts++;
           _appendLog(
             'Failed to send id=${pending.message.id} to ${pending.host.address}:${pending.port}: $error; retry attempt ${pending.attempts}',
           );
-          await Future<void>.delayed(widget.config.interval);
         }
       }
     } finally {
-      if (_sendSession == session) {
         _isFlushingQueue = false;
-      }
     }
   }
 
   void _stopSending({bool logStop = true}) {
-    _sendSession++;
+    final subscription = _socketSubscription;
+    _socketSubscription = null;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
+    }
+
     _timer?.cancel();
     _timer = null;
     _pendingMessages.clear();
