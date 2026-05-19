@@ -12,10 +12,10 @@ void main(List<String> args) {
 
     switch (config.mode) {
       case AppMode.server:
-        runApp(ServerApp(config: config));
+        runApp(const ServerApp());
         return;
       case AppMode.client:
-        runApp(ClientApp(config: config));
+        runApp(const ClientApp());
         return;
     }
   } on FormatException catch (error) {

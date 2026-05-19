@@ -9,6 +9,12 @@ void main() {
     expect(config.mode, AppMode.server);
   });
 
+  test('parses client mode', () {
+    final config = AppConfig.fromArgs(['--mode=client']);
+
+    expect(config.mode, AppMode.client);
+  });
+
   test('round-trips a wire message', () {
     final original = AppMessage(
       id: 7,

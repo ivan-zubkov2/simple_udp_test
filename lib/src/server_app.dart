@@ -3,81 +3,47 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
-import 'app_config.dart';
 import 'app_message.dart';
-import 'searchable_log_view.dart';
+
+const _serverHost = '0.0.0.0';
+const _serverPort = 9002;
 
 class ServerApp extends StatelessWidget {
-  const ServerApp({super.key, required this.config});
-
-  final AppConfig config;
+  const ServerApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      home: _ServerScreen(config: config),
+    return const MaterialApp(
+      home: _ServerScreen(),
     );
   }
 }
 
 class _ServerScreen extends StatefulWidget {
-  const _ServerScreen({required this.config});
-
-  final AppConfig config;
+  const _ServerScreen();
 
   @override
   State<_ServerScreen> createState() => _ServerScreenState();
 }
 
 class _ServerScreenState extends State<_ServerScreen> {
-  final GlobalKey<SearchableLogViewState> _logViewKey =
-      GlobalKey<SearchableLogViewState>();
   final TextEditingController _logController = TextEditingController();
   final ScrollController _logScrollController = ScrollController();
-  late final TextEditingController _hostController;
-  late final TextEditingController _portController;
-  late final TextEditingController _messageController;
   final Map<String, int> _lastReceivedIds = <String, int>{};
   RawDatagramSocket? _socket;
   StreamSubscription<RawSocketEvent>? _socketSubscription;
   bool _isStarting = false;
 
   @override
-  void initState() {
-    super.initState();
-    _hostController = TextEditingController(
-      text: widget.config.host.address,
-    );
-    _portController = TextEditingController(
-      text: widget.config.port.toString(),
-    );
-    _messageController = TextEditingController(
-      text: widget.config.message,
-    );
-  }
-
-  @override
   void dispose() {
-    final socketSubscription = _socketSubscription;
-    if (socketSubscription != null) {
-      unawaited(socketSubscription.cancel());
-    }
-
-    final socket = _socket;
-    if (socket != null) {
-      socket.close();
-    }
-    _hostController.dispose();
-    _portController.dispose();
-    _messageController.dispose();
+    _stopListening(logStop: false);
     _logScrollController.dispose();
     _logController.dispose();
     super.dispose();
   }
 
-  Future<void> _startServer() async {
+  Future<void> _startListening() async {
     if (_socket != null || _isStarting) {
       return;
     }
@@ -87,31 +53,15 @@ class _ServerScreenState extends State<_ServerScreen> {
     });
 
     try {
-      final host = InternetAddress.tryParse(_hostController.text.trim());
-      if (host == null) {
-        throw const FormatException('Enter a valid IP address.');
-      }
-
-      final port = int.tryParse(_portController.text.trim());
-      if (port == null || port < 1 || port > 65535) {
-        throw const FormatException('Enter a port between 1 and 65535.');
-      }
-
-      final socket = await RawDatagramSocket.bind(
-        host,
-        port,
-      );
+      final socket = await RawDatagramSocket.bind(_serverHost, _serverPort);
       _socket = socket;
-      _appendLog(
-        'UDP listener started on ${socket.address.address}:${socket.port}',
-      );
       _socketSubscription = socket.listen(
         _handleSocketEvent,
         onError: (Object error, StackTrace stackTrace) {
-          _appendLog('UDP listener error: $error');
+          _logError('UDP listener error: $error');
         },
         onDone: () {
-          _appendLog('UDP listener stopped.');
+          _logInfo('UDP listener stopped.');
           _socket = null;
           _socketSubscription = null;
           _lastReceivedIds.clear();
@@ -119,16 +69,41 @@ class _ServerScreenState extends State<_ServerScreen> {
             setState(() {});
           }
         },
-        cancelOnError: true,
+        cancelOnError: false,
       );
+      _logInfo('Listening on $_serverHost:$_serverPort');
     } catch (error) {
-      _appendLog('Failed to start server: $error');
+      _logError('Failed to start server: $error');
     } finally {
       if (mounted) {
         setState(() {
           _isStarting = false;
         });
       }
+    }
+  }
+
+  Future<void> _stopListening({bool logStop = true}) async {
+    final subscription = _socketSubscription;
+    _socketSubscription = null;
+    if (subscription != null) {
+      await subscription.cancel();
+    }
+
+    final socket = _socket;
+    _socket = null;
+    if (socket != null) {
+      socket.close();
+    }
+
+    _lastReceivedIds.clear();
+
+    if (logStop) {
+      _logInfo('UDP listener stopped.');
+    }
+
+    if (mounted) {
+      setState(() {});
     }
   }
 
@@ -149,27 +124,27 @@ class _ServerScreenState extends State<_ServerScreen> {
           '${currentDatagram.address.address}:${currentDatagram.port}';
 
       try {
-        final line = utf8.decode(currentDatagram.data).trim();
-        if (line.isEmpty) {
+        final payload = utf8.decode(currentDatagram.data).trim();
+        if (payload.isEmpty) {
           continue;
         }
 
-        final message = AppMessage.fromWire(line);
+        final message = AppMessage.fromWire(payload);
         final lastReceivedId = _lastReceivedIds[remoteAddress];
         final expectedId = lastReceivedId == null ? null : lastReceivedId + 1;
         if (expectedId != null && message.id != expectedId) {
-          _appendLog(
-            'ERROR [$remoteAddress] expected id=$expectedId but received id=${message.id}',
+          _logInfo(
+            'Skipped id on server [$remoteAddress]: expected $expectedId, got ${message.id}',
           );
         }
         _lastReceivedIds[remoteAddress] = message.id;
-        _appendLog(
-          '[$remoteAddress] id=${message.id} time=${message.time.toIso8601String()}',
+        _logInfo(
+          'Received id=${message.id} time=${message.time.toIso8601String()} message="${message.message}"',
         );
       } on FormatException catch (error) {
-        _appendLog('Invalid message from $remoteAddress: $error');
+        _logError('Invalid message from $remoteAddress: $error');
       } catch (error) {
-        _appendLog('Datagram error from $remoteAddress: $error');
+        _logError('Datagram error from $remoteAddress: $error');
       }
     }
   }
@@ -194,77 +169,53 @@ class _ServerScreenState extends State<_ServerScreen> {
     });
   }
 
+  void _logInfo(String line) {
+    stdout.writeln(line);
+    _appendLog(line);
+  }
+
+  void _logError(String line) {
+    stderr.writeln(line);
+    _appendLog(line);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final canStart = _socket == null && !_isStarting;
+    final isActive = _socket != null;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Server')),
-      body: Shortcuts(
-        shortcuts: const <ShortcutActivator, Intent>{
-          SingleActivator(LogicalKeyboardKey.keyF, control: true):
-              SearchIntent(),
-        },
-        child: Actions(
-          actions: <Type, Action<Intent>>{
-            SearchIntent: CallbackAction<SearchIntent>(
-              onInvoke: (SearchIntent intent) {
-                _logViewKey.currentState?.openSearch();
-                return null;
-              },
-            ),
-          },
-          child: Focus(
-            autofocus: true,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  TextField(
-                    controller: _hostController,
-                    enabled: canStart,
-                    decoration: const InputDecoration(
-                      labelText: 'IP address',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _portController,
-                    enabled: canStart,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Port',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _messageController,
-                    enabled: canStart,
-                    decoration: const InputDecoration(
-                      labelText: 'Message (unused in server mode)',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  ElevatedButton(
-                    onPressed: canStart ? _startServer : null,
-                    child: Text(_isStarting ? 'Starting...' : 'Start listener'),
-                  ),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: SearchableLogView(
-                      key: _logViewKey,
-                      controller: _logController,
-                      scrollController: _logScrollController,
-                    ),
-                  ),
-                ],
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ElevatedButton(
+              onPressed:
+                  _isStarting
+                      ? null
+                      : (isActive ? _stopListening : _startListening),
+              child: Text(
+                _isStarting
+                    ? 'Starting...'
+                    : (isActive ? 'Stop listening' : 'Start listening'),
               ),
             ),
-          ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: TextField(
+                controller: _logController,
+                scrollController: _logScrollController,
+                readOnly: true,
+                expands: true,
+                maxLines: null,
+                textAlignVertical: TextAlignVertical.top,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
