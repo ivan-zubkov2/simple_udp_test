@@ -12,7 +12,7 @@ void main(List<String> args) {
 
     switch (config.mode) {
       case AppMode.server:
-        runApp(ServerApp());
+        runApp(ServerApp(config: config));
         return;
       case AppMode.client:
         runApp(ClientApp(config: config));
