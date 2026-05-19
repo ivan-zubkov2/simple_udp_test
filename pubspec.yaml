@@ -1,0 +1,29 @@
+name: simple_udp_test
+description: "Simple UDP sender/listener test app"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.3
+
+dependencies:
+  convert: ^3.1.2
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  msix: ^3.16.9
+
+flutter:
+  uses-material-design: true
+
+msix_config:
+  display_name: Simple UDP Test
+  publisher_display_name: Your Name Or Company
+  identity_name: com.yourcompany.simpleudptest
+  msix_version: 1.0.0.0
+  logo_path: web/icons/Icon-512.png
+  execution_alias: simple_udp_test
