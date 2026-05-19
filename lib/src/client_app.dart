@@ -121,21 +121,24 @@ class _ClientScreenState extends State<_ClientScreen> {
         'Sending UDP datagrams from ${socket.address.address}:${socket.port} to ${host.address}:$port',
       );
 
-      _timer = Timer.periodic(Duration(milliseconds: 50), (_) {
+      _timer = Timer.periodic(Duration(milliseconds: 100), (_) {
         for (var index = 0; index < 2; index++) {
-          _pendingMessages.add(
-            _PendingDatagram(
-              host: host,
-              port: port,
-              message: AppMessage(
-                id: _nextId++,
-                time: DateTime.now(),
-                message: messageText,
-              ),
-            ),
+          final bytesSent = socket.send(
+            utf8.encode(AppMessage(
+              id: _nextId++,
+              time: DateTime.now(),
+              message: messageText,
+            ).toWire()),
+            host,
+            port,
           );
+
+          if (bytesSent == 0) {
+            _appendLog(
+              'Failed to send (bytes = 0) id=${_nextId} to ${host.address}:${port}',
+            );
+          }
         }
-        unawaited(_flushQueue());
       });
     } catch (error) {
       _appendLog('Failed to start sender: $error');
@@ -165,19 +168,6 @@ class _ClientScreenState extends State<_ClientScreen> {
         final pending = _pendingMessages.first;
 
         try {
-          final bytesSent = socket.send(
-            utf8.encode(pending.message.toWire()),
-            pending.host,
-            pending.port,
-          );
-
-          if (bytesSent == 0) {
-            pending.attempts++;
-            _appendLog(
-              'Failed to send (bytes = 0) id=${pending.message.id} to ${pending.host.address}:${pending.port}; retry attempt ${pending.attempts}.',
-            );
-            continue;
-          }
 
           _pendingMessages.removeAt(0);
         } on SocketException catch (error) {
