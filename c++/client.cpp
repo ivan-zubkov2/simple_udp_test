@@ -165,7 +165,7 @@ int main(int argc, char* argv[]) {
                           << " after " << failedAttempts << " failure(s)"
                           << std::endl;
               }
-
+//
 //              std::cout << "Sent id=" << message.id << " time=" << message.time
 //                        << " message=\"" << message.text << '"' << std::endl;
               break;
@@ -176,7 +176,6 @@ int main(int argc, char* argv[]) {
                       << targetIp << ':' << port << "; retry attempt "
                       << failedAttempts << " (WSA error "
                       << WSAGetLastError() << ')' << std::endl;
-            std::this_thread::sleep_for(sendInterval);
           }
         }
 
